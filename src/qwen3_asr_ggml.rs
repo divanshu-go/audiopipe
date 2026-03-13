@@ -144,7 +144,7 @@ impl Engine for Qwen3AsrGgmlEngine {
             String::new()
         };
 
-        tracing::info!(
+        tracing::debug!(
             "qwen3-asr-ggml: mel={}ms encode={}ms decode={}ms total={}ms",
             result.t_mel_ms,
             result.t_encode_ms,
