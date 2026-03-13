@@ -67,8 +67,11 @@ fn main() {
     // of propagating the error. We patch the source before cmake builds it
     // so that failures set a flag checked by ggml_metal_graph_compute, which
     // already returns GGML_STATUS_FAILED in other code paths.
+    // Also patch ggml_metal_rsets_free to not assert on non-empty rsets during
+    // process exit (static destructor ordering issue).
     if use_metal {
         patch_ggml_metal_no_abort(&ggml_root);
+        patch_ggml_metal_device_teardown(&ggml_root);
     }
 
     // ── 1. Build GGML via cmake ───────────────────────────────────────────
@@ -1091,6 +1094,70 @@ fn patch_ggml_metal_no_abort(ggml_root: &Path) {
         println!("cargo:warning=qwen3-asr-sys: patched ggml-metal-context.m ({} patches applied — no-abort on GPU error)", patches_applied);
     } else {
         println!("cargo:warning=qwen3-asr-sys: ggml-metal patch only matched {}/4 locations (upstream may have changed)", patches_applied);
+    }
+}
+
+/// Patch `ggml-metal-device.m` so that `ggml_metal_rsets_free` doesn't abort
+/// when resource sets are non-empty during process exit.
+///
+/// When the process exits, C++ static destructors run in arbitrary order.
+/// The global `ggml_metal_device` unique_ptr fires its destructor which calls
+/// `ggml_metal_device_free → ggml_metal_rsets_free`. If any ggml backends
+/// haven't been freed yet (common during exit), the rsets are non-empty and
+/// `GGML_ASSERT([rsets->data count] == 0)` calls abort().
+///
+/// We replace the assert with a warning log so the process can exit cleanly.
+fn patch_ggml_metal_device_teardown(ggml_root: &Path) {
+    let file = ggml_root.join("src/ggml-metal/ggml-metal-device.m");
+    if !file.exists() {
+        println!("cargo:warning=qwen3-asr-sys: ggml-metal-device.m not found, skipping teardown patch");
+        return;
+    }
+
+    let original = match std::fs::read_to_string(&file) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("cargo:warning=qwen3-asr-sys: failed to read ggml-metal-device.m: {}", e);
+            return;
+        }
+    };
+
+    // Don't re-patch
+    if original.contains("rsets_free_patched") {
+        println!("cargo:warning=qwen3-asr-sys: ggml-metal-device teardown patch already applied");
+        return;
+    }
+
+    let lines: Vec<&str> = original.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 10);
+    let mut patched = false;
+
+    for line in &lines {
+        let trimmed = line.trim();
+
+        // Replace: GGML_ASSERT([rsets->data count] == 0);
+        // With: log warning and skip cleanup if non-empty (process is exiting anyway)
+        if trimmed == "GGML_ASSERT([rsets->data count] == 0);" {
+            out.push("    // rsets_free_patched: tolerate non-empty rsets during process exit".to_string());
+            out.push("    if ([rsets->data count] != 0) {".to_string());
+            out.push(r#"        GGML_LOG_WARN("%s: %lu Metal resource sets still alive during teardown (process exiting)\n", __func__, (unsigned long)[rsets->data count]);"#.to_string());
+            out.push("        // Skip cleanup — resources will be reclaimed by the OS on exit.".to_string());
+            out.push("        // Continuing with free() here would use-after-free the leaked backends.".to_string());
+            out.push("        free(rsets);".to_string());
+            out.push("        return;".to_string());
+            out.push("    }".to_string());
+            patched = true;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+
+    if patched {
+        let content = out.join("\n") + "\n";
+        std::fs::write(&file, content).expect("failed to write patched ggml-metal-device.m");
+        println!("cargo:warning=qwen3-asr-sys: patched ggml-metal-device.m (no-abort on rsets teardown)");
+    } else {
+        println!("cargo:warning=qwen3-asr-sys: ggml-metal-device teardown patch marker not found (upstream may have changed)");
     }
 }
 
