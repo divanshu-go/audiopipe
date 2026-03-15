@@ -39,7 +39,21 @@ For best CPU performance on Windows/Linux, enable OpenBLAS (`~10x faster` matmul
 audiopipe = { git = "https://github.com/screenpipe/audiopipe.git", features = ["qwen3-asr-antirez-blas"] }
 ```
 
-On Windows/Linux, download [pre-built OpenBLAS](https://github.com/OpenMathLib/OpenBLAS/releases) and set `OPENBLAS_PATH` to the extracted directory (e.g. `C:\OpenBLAS\win64`). On macOS, Accelerate is used automatically.
+On macOS, Accelerate is used automatically. On Windows, set up OpenBLAS:
+
+```powershell
+# download and extract pre-built OpenBLAS
+Invoke-WebRequest "https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.31/OpenBLAS-0.3.31-x64.zip" -OutFile OpenBLAS.zip
+Expand-Archive OpenBLAS.zip -DestinationPath C:\OpenBLAS
+Remove-Item OpenBLAS.zip
+
+# set env var (persistent across sessions)
+[System.Environment]::SetEnvironmentVariable("OPENBLAS_PATH", "C:\OpenBLAS\win64", "User")
+$env:OPENBLAS_PATH = "C:\OpenBLAS\win64"
+
+# build with BLAS
+cargo run --release --example bench_asr --features qwen3-asr-antirez-blas --no-default-features -- audio.wav
+```
 
 ### Qwen3-ASR GGML
 
