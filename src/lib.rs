@@ -31,5 +31,8 @@ pub mod qwen3_asr;
 #[cfg(feature = "qwen3-asr-ggml")]
 pub mod qwen3_asr_ggml;
 
+#[cfg(feature = "qwen3-asr-antirez")]
+pub mod qwen3_asr_antirez;
+
 pub use error::Error;
 pub use model::{Model, Segment, TranscribeOptions, TranscribeResult};

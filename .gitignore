@@ -1,5 +1,6 @@
 target/
 *.wav
+!test.wav
 *.onnx
 *.onnx.data
 *.npy

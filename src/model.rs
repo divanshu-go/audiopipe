@@ -70,6 +70,11 @@ impl Model {
                 let engine = crate::whisper::WhisperEngine::from_pretrained(n)?;
                 Ok(Self { inner: Box::new(engine) })
             }
+            #[cfg(feature = "qwen3-asr-antirez")]
+            n if n.starts_with("qwen3-asr") && n.contains("antirez") => {
+                let engine = crate::qwen3_asr_antirez::AntirezAsrEngine::from_pretrained(n)?;
+                Ok(Self { inner: Box::new(engine) })
+            }
             #[cfg(feature = "qwen3-asr-ggml")]
             n if n.starts_with("qwen3-asr") && n.contains("ggml") => {
                 let engine = crate::qwen3_asr_ggml::Qwen3AsrGgmlEngine::from_pretrained(n)?;
@@ -108,6 +113,11 @@ impl Model {
             #[cfg(feature = "qwen3-asr-ggml")]
             "qwen3-asr-ggml" => {
                 let engine = crate::qwen3_asr_ggml::Qwen3AsrGgmlEngine::from_dir(path)?;
+                Ok(Self { inner: Box::new(engine) })
+            }
+            #[cfg(feature = "qwen3-asr-antirez")]
+            "qwen3-asr-antirez" => {
+                let engine = crate::qwen3_asr_antirez::AntirezAsrEngine::from_dir(path)?;
                 Ok(Self { inner: Box::new(engine) })
             }
             _ => Err(Error::ModelNotFound(format!("unknown engine type '{}'", engine_type))),
