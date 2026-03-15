@@ -14,7 +14,8 @@ println!("{}", result.text);
 
 | Model | Backend | Params | Languages | Notes |
 |-------|---------|--------|-----------|-------|
-| `qwen3-asr-0.6b-ggml` | GGML | 0.6B | 6000+ | Recommended. Metal/Vulkan/CUDA GPU support |
+| `qwen3-asr-0.6b-antirez` | Pure C | 0.6B | 6000+ | Fastest on CPU. BLAS + AVX2/NEON |
+| `qwen3-asr-0.6b-ggml` | GGML | 0.6B | 6000+ | Metal/Vulkan/CUDA GPU support |
 | `qwen3-asr-0.6b` | ONNX | 0.6B | 6000+ | CoreML/DirectML/CUDA via ONNX Runtime |
 | `parakeet-tdt-0.6b-v2` | ONNX | 0.6B | English | NVIDIA Parakeet TDT |
 | `parakeet-tdt-0.6b-v3` | ONNX | 0.6B | 25 languages | NVIDIA Parakeet TDT |
@@ -22,7 +23,16 @@ println!("{}", result.text);
 
 ## Usage
 
-### Qwen3-ASR GGML (recommended)
+### Qwen3-ASR antirez (fastest CPU)
+
+Pure C implementation by [antirez](https://github.com/antirez/qwen-asr). Faster-than-realtime on low-end CPUs using BLAS and custom AVX2/NEON kernels. Uses safetensors weights from `Qwen/Qwen3-ASR-0.6B`.
+
+```toml
+[dependencies]
+audiopipe = { git = "https://github.com/screenpipe/audiopipe.git", features = ["qwen3-asr-antirez"] }
+```
+
+### Qwen3-ASR GGML
 
 Best balance of speed, accuracy, and language coverage. Uses GGML backend with native GPU support.
 
@@ -75,7 +85,8 @@ audiopipe = { git = "https://github.com/screenpipe/audiopipe.git", features = ["
 
 | Feature | Description |
 |---------|-------------|
-| `qwen3-asr-ggml` | Qwen3-ASR via GGML (recommended) |
+| `qwen3-asr-antirez` | Qwen3-ASR pure C (fastest CPU) |
+| `qwen3-asr-ggml` | Qwen3-ASR via GGML |
 | `qwen3-asr` | Qwen3-ASR via ONNX Runtime |
 | `parakeet` | NVIDIA Parakeet TDT via ONNX Runtime |
 | `whisper` | Whisper via whisper.cpp |
@@ -97,6 +108,9 @@ cargo run --release --example test_ggml --features qwen3-asr-ggml -- audio.wav q
 
 # Transcribe with Parakeet
 cargo run --release --example transcribe --features parakeet -- audio.wav
+
+# Benchmark antirez/qwen-asr (pure C, fast CPU)
+cargo run --release --example bench_asr --features qwen3-asr-antirez -- audio.wav
 
 # Benchmark
 cargo run --release --example benchmark --features qwen3-asr-ggml
