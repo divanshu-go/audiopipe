@@ -11,7 +11,7 @@ categories = ["multimedia::audio", "science"]
 [dependencies]
 ort = { version = "=2.0.0-rc.6", default-features = false, features = ["ndarray", "half"], optional = true }
 ort-sys = { version = "=2.0.0-rc.6", default-features = false, optional = true }
-hf-hub = { version = "0.4", default-features = false, features = ["rustls-tls", "tokio"] }
+hf-hub = { version = "0.4", default-features = false, features = ["rustls-tls", "tokio", "ureq"] }
 ndarray = { version = "0.16", optional = true }
 realfft = { version = "3", optional = true }
 thiserror = "2"
