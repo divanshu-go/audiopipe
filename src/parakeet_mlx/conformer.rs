@@ -557,14 +557,19 @@ impl Conformer {
         // Subsampling: (B, T, 128) -> (B, T', 1024)
         let x = self.pre_encode.forward(x)?;
         let out_lengths = self.pre_encode.compute_lengths(&lengths)?;
+        tracing::debug!("pre_encode out: shape={:?}", x.shape());
 
         // Positional encoding
         let (x, pos_emb) = self.pos_enc.forward(&x, 0)?;
+        tracing::debug!("after pos_enc: x={:?}, pos_emb={:?}", x.shape(), pos_emb.shape());
 
         // Run through all conformer blocks
         let mut x = x;
-        for layer in self.layers.iter_mut() {
+        for (i, layer) in self.layers.iter_mut().enumerate() {
             x = layer.forward(&x, Some(&pos_emb))?;
+            if i == 0 || i == 23 {
+                tracing::debug!("after layer {}: shape={:?}", i, x.shape());
+            }
         }
 
         Ok((x, out_lengths))

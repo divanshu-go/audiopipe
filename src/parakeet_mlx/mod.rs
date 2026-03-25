@@ -169,6 +169,25 @@ impl ParakeetMlxEngine {
             .load_weights(&weights)
             .map_err(|e| Error::Other(format!("failed to load joint weights: {e}")))?;
 
+        // Verify joint weights loaded correctly
+        {
+            mlx_rs::transforms::eval([joint.enc_proj.weight.as_ref()]).ok();
+            let w: Vec<f32> = joint.enc_proj.weight.as_ref().as_slice().to_vec();
+            tracing::info!("joint.enc_proj weight: shape={:?}, range=[{:.4}, {:.4}]",
+                joint.enc_proj.weight.as_ref().shape(),
+                w.iter().copied().fold(f32::MAX, f32::min),
+                w.iter().copied().fold(f32::MIN, f32::max));
+            if let Some(ref b) = *joint.enc_proj.bias {
+                mlx_rs::transforms::eval([b]).ok();
+                let bv: Vec<f32> = b.as_slice().to_vec();
+                tracing::info!("joint.enc_proj bias: range=[{:.4}, {:.4}]",
+                    bv.iter().copied().fold(f32::MAX, f32::min),
+                    bv.iter().copied().fold(f32::MIN, f32::max));
+            } else {
+                tracing::warn!("joint.enc_proj bias: NONE!");
+            }
+        }
+
         encoder.load_weights(&weights, "encoder");
 
         let mel_config = MelConfig::default();
@@ -218,10 +237,22 @@ impl Engine for ParakeetMlxEngine {
         // --- Compute log-mel spectrogram: [1, T, n_mels] ---
         let mel = get_logmel(&audio_arr, &self.mel_config)
             .map_err(|e| Error::Other(format!("mel computation failed: {e}")))?;
+        tracing::info!("mel: shape={:?}", mel.shape());
 
         // --- Conformer encoder: [1, T, 128] -> [1, T/8, 1024] ---
         let (encoder_out, _lengths) = self.conformer.forward(&mel, None)
             .map_err(|e| Error::Other(format!("encoder failed: {e}")))?;
+        // Evaluate and check range
+        mlx_rs::transforms::eval([&encoder_out])
+            .map_err(|e| Error::Other(format!("eval failed: {e}")))?;
+        let enc_slice: Vec<f32> = encoder_out.as_slice().to_vec();
+        let enc_min = enc_slice.iter().copied().fold(f32::MAX, f32::min);
+        let enc_max = enc_slice.iter().copied().fold(f32::MIN, f32::max);
+        let enc_mean = enc_slice.iter().sum::<f32>() / enc_slice.len() as f32;
+        tracing::info!("encoder_out: shape={:?}, range=[{:.6}, {:.6}], mean={:.6}",
+            encoder_out.shape(), enc_min, enc_max, enc_mean);
+        // Print first 10 values of frame 0 for comparison with Python
+        tracing::info!("enc[0,0,:10] = {:?}", &enc_slice[..10.min(enc_slice.len())]);
 
         // --- TDT greedy decode ---
         let (text, segments) = greedy_tdt_decode(
