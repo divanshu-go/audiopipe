@@ -32,13 +32,14 @@ impl ParakeetEngine {
             .map_err(|e| Error::Download(e.to_string()))?;
         let model = api.model(repo.to_string());
 
-        let encoder_file = model.get("encoder-model.onnx")
+        let encoder_file = hf_get_with_retry(&model, "encoder-model.onnx", 3)
             .map_err(|e| Error::Download(format!("encoder: {e}")))?;
         let model_dir = encoder_file.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
 
         // Download all required files
         for f in &["decoder_joint-model.onnx", "vocab.txt"] {
-            model.get(f).map_err(|e| Error::Download(format!("{f}: {e}")))?;
+            hf_get_with_retry(&model, f, 3)
+                .map_err(|e| Error::Download(format!("{f}: {e}")))?;
         }
         // Try external weights (may not exist for int8)
         let _ = model.get("encoder-model.onnx.data");
@@ -284,6 +285,32 @@ fn greedy_tdt_decode(
     }
 
     Ok((tokens, frame_indices))
+}
+
+/// Download a file from HuggingFace with retry on transient connection errors.
+fn hf_get_with_retry(
+    model: &hf_hub::api::sync::ApiRepo,
+    filename: &str,
+    max_retries: u32,
+) -> std::result::Result<PathBuf, String> {
+    let mut last_err = String::new();
+    for attempt in 0..max_retries {
+        match model.get(filename) {
+            Ok(path) => return Ok(path),
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt + 1 < max_retries {
+                    let delay = std::time::Duration::from_secs(2u64.pow(attempt));
+                    tracing::warn!(
+                        "parakeet: download {} failed (attempt {}/{}): {}, retrying in {:?}",
+                        filename, attempt + 1, max_retries, last_err, delay
+                    );
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+    Err(last_err)
 }
 
 fn find_file(dir: &Path, candidates: &[&str]) -> Result<PathBuf> {
