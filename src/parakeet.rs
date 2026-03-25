@@ -129,6 +129,7 @@ fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
     tracing::info!("parakeet: loading {} on CPU ({} threads)", file_name, intra_threads);
     Ok(Session::builder()?
         .with_intra_threads(intra_threads)?
+        .with_inter_threads(1)?
         .commit_from_file(onnx_path)?)
 }
 
