@@ -120,9 +120,16 @@ fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
         }
     }
 
-    // CPU fallback
-    tracing::info!("parakeet: loading {} on CPU", file_name);
-    Ok(Session::builder()?.commit_from_file(onnx_path)?)
+    // CPU fallback — limit threads to avoid maxing all cores during inference.
+    // Use ~half of available cores (min 2, max 4) so the system stays responsive.
+    let num_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let intra_threads = (num_cores / 2).clamp(2, 4);
+    tracing::info!("parakeet: loading {} on CPU ({} threads)", file_name, intra_threads);
+    Ok(Session::builder()?
+        .with_intra_threads(intra_threads)?
+        .commit_from_file(onnx_path)?)
 }
 
 /// Helper to extract f32 tensor from ort output as a raw shape + data.
