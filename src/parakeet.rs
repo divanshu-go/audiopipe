@@ -94,10 +94,19 @@ fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
     // --- CoreML (macOS / iOS) ---
     #[cfg(feature = "coreml")]
     {
+        // Check if model has external data (e.g. encoder-model.onnx.data)
+        // CoreML caching breaks with external data files, so skip cache in that case
+        let has_external_data = {
+            let data_path = onnx_path.with_extension("onnx.data");
+            data_path.exists()
+        };
+
         // Derive a stable cache directory next to the model file
-        let cache_dir = onnx_path
-            .parent()
-            .map(|p| p.join("coreml_cache"));
+        let cache_dir = if has_external_data {
+            None // Skip caching — conflicts with external data path resolution
+        } else {
+            onnx_path.parent().map(|p| p.join("coreml_cache"))
+        };
 
         // Try MLProgram first (more ops on ANE), fall back to NeuralNetwork
         for format in &[
