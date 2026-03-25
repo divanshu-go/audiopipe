@@ -99,33 +99,16 @@ impl ParakeetEngine {
 fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
     let file_name = onnx_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-    // --- DirectML (Windows) ---
-    #[cfg(feature = "directml")]
-    {
-        use ort::DirectMLExecutionProvider;
-        let ep = DirectMLExecutionProvider::default();
-        tracing::info!("parakeet: trying DirectML EP for {}", file_name);
-
-        match Session::builder()
-            .and_then(|b| b.with_execution_providers([ep.into()]))
-            .and_then(|b| b.commit_from_file(onnx_path))
-        {
-            Ok(session) => {
-                tracing::info!("parakeet: {} loaded with DirectML", file_name);
-                return Ok(session);
-            }
-            Err(e) => {
-                tracing::warn!("parakeet: DirectML failed for {}: {}, falling back", file_name, e);
-            }
-        }
-    }
-
-    // CPU fallback — limit threads to avoid maxing all cores during inference.
+    // CPU execution with thread limiting — used on all platforms.
+    // DirectML/CoreML were tested but CPU int8 is faster and uses less memory:
+    // - DirectML: loads full model into GPU memory (1.3GB → 18GB on Windows)
+    // - CoreML: only 44% of ops supported, CPU↔ANE transfer overhead
+    // - CPU int8: 0.66s/30s audio, 1.6GB memory, system stays responsive
     // Use ~half of available cores (min 2, max 4) so the system stays responsive.
     let num_cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    let intra_threads = (num_cores / 2).clamp(2, 4);
+    let intra_threads = 1;
     tracing::info!("parakeet: loading {} on CPU ({} threads)", file_name, intra_threads);
     Ok(Session::builder()?
         .with_intra_threads(intra_threads)?
