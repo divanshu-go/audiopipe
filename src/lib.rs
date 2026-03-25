@@ -34,6 +34,9 @@ pub mod qwen3_asr_ggml;
 #[cfg(feature = "qwen3-asr-antirez")]
 pub mod qwen3_asr_antirez;
 
+#[cfg(feature = "parakeet-mlx")]
+pub mod parakeet_mlx;
+
 pub use error::Error;
 pub use model::{Model, Segment, TranscribeOptions, TranscribeResult};
 

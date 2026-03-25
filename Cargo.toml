@@ -19,6 +19,8 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 half = { version = "2", optional = true }
+mlx-rs = { version = "0.25", optional = true }
+safetensors = { version = "0.4", optional = true }
 whisper-rs = { version = "0.15", optional = true }
 qwen3-asr-sys = { path = "qwen3-asr-sys", optional = true }
 antirez-asr-sys = { path = "antirez-asr-sys", optional = true }
@@ -68,6 +70,7 @@ qwen3-asr = ["onnx-deps"]
 qwen3-asr-ggml = ["dep:qwen3-asr-sys"]
 qwen3-asr-antirez = ["dep:antirez-asr-sys"]
 qwen3-asr-antirez-blas = ["qwen3-asr-antirez", "antirez-asr-sys/openblas"]
+parakeet-mlx = ["dep:mlx-rs", "dep:safetensors", "dep:half"]
 all-models = ["whisper", "parakeet", "qwen3-asr"]
 
 # GGML GPU backends
