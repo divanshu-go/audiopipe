@@ -6,7 +6,7 @@ use crate::audio::{self, MelConfig};
 use crate::error::{Error, Result};
 use crate::model::{Engine, Segment, TranscribeOptions, TranscribeResult};
 use ndarray::{Array1, Array2, Array3};
-use ort::Session;
+use ort::session::Session;
 use std::path::{Path, PathBuf};
 
 /// Parakeet TDT engine using ONNX Runtime.
@@ -78,27 +78,71 @@ impl ParakeetEngine {
 }
 
 /// Build an ONNX session with the best available execution provider.
-/// CoreML on macOS (ANE + GPU + CPU), DirectML on Windows, CPU fallback.
+///
+/// On macOS with `coreml` feature:
+/// - Tries MLProgram format first (better ANE / op coverage), then NeuralNetwork
+/// - All compute units (CPU + GPU + ANE)
+/// - FastPrediction specialization (optimise for inference latency)
+/// - Model caching to avoid recompilation across runs
+/// - fp16 accumulation on GPU
+///
+/// On Windows with `directml` feature: tries DirectML for GPU acceleration.
+/// Falls back to CPU if no accelerator works.
 fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
     let file_name = onnx_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-    // --- CoreML (macOS) ---
+    // --- CoreML (macOS / iOS) ---
     #[cfg(feature = "coreml")]
     {
-        use ort::CoreMLExecutionProvider;
-        let ep = CoreMLExecutionProvider::default();
-        tracing::info!("parakeet: trying CoreML EP for {}", file_name);
+        // Derive a stable cache directory next to the model file
+        let cache_dir = onnx_path
+            .parent()
+            .map(|p| p.join("coreml_cache"));
 
-        match Session::builder()
-            .and_then(|b| b.with_execution_providers([ep.into()]))
-            .and_then(|b| b.commit_from_file(onnx_path))
-        {
-            Ok(session) => {
-                tracing::info!("parakeet: {} loaded with CoreML", file_name);
-                return Ok(session);
+        // Try MLProgram first (more ops on ANE), fall back to NeuralNetwork
+        for format in &[
+            ort::ep::coreml::ModelFormat::MLProgram,
+            ort::ep::coreml::ModelFormat::NeuralNetwork,
+        ] {
+            let format_name = match format {
+                ort::ep::coreml::ModelFormat::MLProgram => "MLProgram",
+                ort::ep::coreml::ModelFormat::NeuralNetwork => "NeuralNetwork",
+            };
+
+            let mut ep = ort::ep::CoreML::default()
+                .with_model_format(*format)
+                .with_compute_units(ort::ep::coreml::ComputeUnits::All)
+                .with_specialization_strategy(ort::ep::coreml::SpecializationStrategy::FastPrediction)
+                .with_low_precision_accumulation_on_gpu(true);
+
+            if let Some(ref dir) = cache_dir {
+                let cache_sub = dir.join(format_name.to_lowercase());
+                let _ = std::fs::create_dir_all(&cache_sub);
+                ep = ep.with_model_cache_dir(cache_sub.to_string_lossy());
             }
-            Err(e) => {
-                tracing::warn!("parakeet: CoreML failed for {}: {}, falling back", file_name, e);
+
+            tracing::info!(
+                "parakeet: trying CoreML EP ({}, All compute units) for {}",
+                format_name, file_name
+            );
+
+            let result = (|| -> std::result::Result<Session, ort::Error> {
+                let mut builder = Session::builder()?;
+                builder = builder.with_execution_providers([ep.build()])?;
+                builder.commit_from_file(onnx_path)
+            })();
+
+            match result {
+                Ok(session) => {
+                    tracing::info!("parakeet: {} loaded with CoreML {} format", file_name, format_name);
+                    return Ok(session);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "parakeet: CoreML {} failed for {}: {}",
+                        format_name, file_name, e
+                    );
+                }
             }
         }
     }
@@ -106,14 +150,16 @@ fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
     // --- DirectML (Windows) ---
     #[cfg(feature = "directml")]
     {
-        use ort::DirectMLExecutionProvider;
-        let ep = DirectMLExecutionProvider::default();
+        let ep = ort::ep::DirectML::default();
         tracing::info!("parakeet: trying DirectML EP for {}", file_name);
 
-        match Session::builder()
-            .and_then(|b| b.with_execution_providers([ep.into()]))
-            .and_then(|b| b.commit_from_file(onnx_path))
-        {
+        let result = (|| -> std::result::Result<Session, ort::Error> {
+            let builder = Session::builder()?;
+            let builder = builder.with_execution_providers([ep.build()])?;
+            builder.commit_from_file(onnx_path)
+        })();
+
+        match result {
             Ok(session) => {
                 tracing::info!("parakeet: {} loaded with DirectML", file_name);
                 return Ok(session);
@@ -130,12 +176,12 @@ fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
 }
 
 /// Helper to extract f32 tensor from ort output as a raw shape + data.
-fn extract_f32(val: &ort::DynValue) -> Result<(Vec<usize>, Vec<f32>)> {
-    let view = val
+fn extract_f32(val: &ort::value::DynValue) -> Result<(Vec<usize>, Vec<f32>)> {
+    let (shape, data) = val
         .try_extract_tensor::<f32>()
         .map_err(|e| Error::Other(format!("extract tensor: {e}")))?;
-    let dims: Vec<usize> = view.shape().to_vec();
-    Ok((dims, view.iter().copied().collect()))
+    let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+    Ok((dims, data.to_vec()))
 }
 
 impl Engine for ParakeetEngine {
@@ -158,10 +204,10 @@ impl Engine for ParakeetEngine {
             .to_owned();
         let input_len = Array1::from_vec(vec![n_frames as i64]);
 
-        let enc_inputs = ort::inputs!(
-            "audio_signal" => ort::Value::from_array(input)?,
-            "length" => ort::Value::from_array(input_len)?
-        )?;
+        let enc_inputs = ort::inputs![
+            "audio_signal" => ort::value::Tensor::from_array(input)?,
+            "length" => ort::value::Tensor::from_array(input_len)?
+        ];
         let enc_out = self.encoder.run(enc_inputs)?;
 
         let (enc_shape, enc_data) = extract_f32(&enc_out["outputs"])?;
@@ -235,13 +281,13 @@ fn greedy_tdt_decode(
         let targets = Array2::from_shape_vec((1, 1), vec![last_token])
             .map_err(|e| Error::Other(format!("targets: {e}")))?;
 
-        let dec_inputs = ort::inputs!(
-            "encoder_outputs" => ort::Value::from_array(frame)?,
-            "targets" => ort::Value::from_array(targets)?,
-            "target_length" => ort::Value::from_array(Array1::from_vec(vec![1i32]))?,
-            "input_states_1" => ort::Value::from_array(state_h.clone())?,
-            "input_states_2" => ort::Value::from_array(state_c.clone())?
-        )?;
+        let dec_inputs = ort::inputs![
+            "encoder_outputs" => ort::value::Tensor::from_array(frame)?,
+            "targets" => ort::value::Tensor::from_array(targets)?,
+            "target_length" => ort::value::Tensor::from_array(Array1::from_vec(vec![1i32]))?,
+            "input_states_1" => ort::value::Tensor::from_array(state_h.clone())?,
+            "input_states_2" => ort::value::Tensor::from_array(state_c.clone())?
+        ];
         let out = decoder.run(dec_inputs)?;
 
         let (_, logits) = extract_f32(&out["outputs"])?;
