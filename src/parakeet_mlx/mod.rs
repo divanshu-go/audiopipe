@@ -14,6 +14,11 @@ pub mod conformer;
 pub mod decode;
 pub mod rnnt;
 
+// MLX C API — synchronize waits for all GPU commands to complete.
+extern "C" {
+    fn mlx_synchronize() -> std::ffi::c_int;
+}
+
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -312,6 +317,16 @@ impl Engine for ParakeetMlxEngine {
             self.time_ratio,
         )
         .map_err(|e| Error::Decode(format!("greedy TDT decode failed: {e}")))?;
+
+        // Force ALL pending Metal GPU commands to complete before returning.
+        // Without this, the GPU_LOCK in Model releases while Metal command
+        // buffers are still in-flight on GCD dispatch queues. If another
+        // transcription starts before they finish, overlapping Metal
+        // submissions cause MLX to call abort().
+        //
+        // mlx_synchronize() blocks until all enqueued operations on the
+        // default stream have completed, including their Metal callbacks.
+        unsafe { mlx_synchronize() };
 
         Ok(TranscribeResult { text, segments })
     }
