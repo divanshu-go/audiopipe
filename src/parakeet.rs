@@ -170,7 +170,7 @@ fn build_session_with_ep(onnx_path: &std::path::Path) -> Result<Session> {
 /// Helper to extract f32 tensor from ort output as a raw shape + data.
 fn extract_f32(val: &ort::DynValue) -> Result<(Vec<usize>, Vec<f32>)> {
     let view = val
-        .try_extract_tensor::<f32>()
+        .try_extract_array::<f32>()
         .map_err(|e| Error::Other(format!("extract tensor: {e}")))?;
     let dims: Vec<usize> = view.shape().to_vec();
     Ok((dims, view.iter().copied().collect()))

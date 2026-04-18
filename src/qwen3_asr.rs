@@ -535,7 +535,7 @@ impl Qwen3AsrEngine {
         let (conv_data, tokens_per_chunk_max) = {
             let conv_outputs = self.conv_stem.run(ort::inputs![chunks_tensor])
                 .map_err(ort_err)?;
-            let (conv_shape, conv_slice) = conv_outputs[0].try_extract_tensor::<f16>().map_err(ort_err)?;
+            let (conv_shape, conv_slice) = conv_outputs[0].try_extract_array::<f16>().map_err(ort_err)?;
             (conv_slice.to_vec(), conv_shape[1] as usize)
         };
 
